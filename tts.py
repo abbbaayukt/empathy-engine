@@ -39,13 +39,14 @@ def _rate_to_pct(wpm: int, base: int = 140) -> str:
     return f"+{pct}%" if pct >= 0 else f"{pct}%"
 
 def _map_pitch(pitch_str: str, offset_st: int = 0) -> str:
-    """'+2st' + 5st offset → '+7st' (Supported natively by Azure SSML)"""
+    """'+2st' + 5st offset → '+42%' (Relative percentages are most robust for Edge/Azure Neural)"""
     try:
         val = int(pitch_str.replace("st", ""))
     except ValueError:
         val = 0
-    total = val + offset_st
-    return f"+{total}st" if total >= 0 else f"{total}st"
+    total_st = val + offset_st
+    pct = total_st * 6 # Approx 6% frequency change per semitone
+    return f"+{pct}%" if pct >= 0 else f"{pct}%"
 
 def _db_to_pct(vol_str: str) -> str:
     """'+3dB' → '+21%' (7 % per dB, perceptual approximation)"""
@@ -105,11 +106,11 @@ def _build_ssml(segment_meta: list[dict], voice_name: str, pitch_offset: int) ->
     return "".join(parts).strip()
 
 
-async def _edge_synth_async(ssml: str) -> bytes:
+async def _edge_synth_async(ssml: str, voice: str) -> bytes:
     """Async: stream audio from edge-tts and return raw MP3 bytes."""
-    # When providing SSML, we DON'T pass the voice parameter to Communicate
-    # as it's already defined inside the <voice> tag in the SSML.
-    communicate = edge_tts.Communicate(ssml)
+    # We pass the 'voice' explicitly to the constructor to 'prime' the connection
+    # to the correct regional server, even though we use SSML.
+    communicate = edge_tts.Communicate(ssml, voice=voice)
     chunks = []
     async for chunk in communicate.stream():
         if chunk["type"] == "audio":
@@ -133,37 +134,19 @@ async def synthesize_edge_segmented(
 
     voice_name, pitch_offset = EDGE_VOICES.get(voice_selection, EDGE_VOICES["woman"])
 
-    # Cache (v2 signature to clear stale bugs)
+    # Cache (v3 signature to clear stale bugs)
     cache_key = hashlib.md5(
-        f"{full_text}_{voice_selection}_edge_v2".encode()
+        f"{full_text}_{voice_selection}_edge_v3".encode()
     ).hexdigest()
     cache_path = os.path.join(AUDIO_CACHE_DIR, f"{cache_key}.mp3")
 
-    # Segment + classify
-    classifier = get_classifier()
-    segments   = split_into_segments(full_text)
-    segment_meta = []
-
-    for seg_text in segments:
-        emotion, conf, _ = classifier.detect_emotion(seg_text)
-        rate, pitch, volume = map_emotion_to_params(emotion, conf)
-        segment_meta.append({
-            "text":       seg_text,
-            "emotion":    emotion,
-            "confidence": round(conf, 3),
-            "rate":       rate,
-            "pitch":      pitch,
-            "volume":     volume,
-        })
-        print(f"[EDGE] '{seg_text[:45]}…' → {emotion} ({conf:.2f})")
-
     if not force_recompute and os.path.exists(cache_path):
         with open(cache_path, "rb") as f:
-            return f.read(), segment_meta
+            return f.read(), [] # simplified return for this loop
 
     # Build SSML + synthesize
     ssml = _build_ssml(segment_meta, voice_name, pitch_offset)
-    audio_bytes = await _edge_synth_async(ssml)
+    audio_bytes = await _edge_synth_async(ssml, voice_name)
 
     # Cache result
     with open(cache_path, "wb") as f:

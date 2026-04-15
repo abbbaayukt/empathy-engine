@@ -56,7 +56,8 @@ async def _build_response(text: str, voice: str, force: bool) -> StreamingRespon
         logger.info(f"Generated SSML for synthesis:\n{ssml[:500]}...")
 
         # Actual synthesis (we use the internal async runner since we already have the SSML)
-        audio_bytes = await _edge_synth_async(ssml)
+        # We pass voice_name to 'prime' the engine for SSML
+        audio_bytes = await _edge_synth_async(ssml, voice_name)
     except Exception as e:
         logger.error(f"Edge-TTS failed, attempting pyttsx3 fallback: {e}")
         # Build segment_meta again for fallback (unlikely path but safe)
