@@ -23,12 +23,34 @@
 
         <main>
             <div class="card glass">
-                <div class="input-group">
-                    <label for="text">What should I say?</label>
-                    <textarea id="text" rows="4" placeholder="Type something emotional here... like 'I just won the lottery!' or 'I'm so worried about what might happen...'"></textarea>
+
+                <!-- ── Input mode tabs ── -->
+                <div class="tab-bar">
+                    <button class="tab active" id="tab-text" onclick="switchTab('text')">✏️ Type Text</button>
+                    <button class="tab" id="tab-file" onclick="switchTab('file')">📄 Upload File</button>
                 </div>
 
-                <div class="controls" style="display: flex; gap: 1rem; align-items: center; justify-content: flex-end;">
+                <!-- Text input panel -->
+                <div id="panel-text" class="input-group">
+                    <label for="text">What should I say?</label>
+                    <textarea id="text" rows="4" placeholder="Type something emotional here... e.g. 'I just won the lottery! But I'm so scared about what comes next.'"></textarea>
+                </div>
+
+                <!-- File upload panel -->
+                <div id="panel-file" class="input-group hidden">
+                    <label>Upload a file <span class="muted">(.txt, .pdf, .docx)</span></label>
+                    <div class="drop-zone" id="drop-zone">
+                        <div class="drop-icon">📂</div>
+                        <p>Drag & drop your file here</p>
+                        <span class="muted">or</span>
+                        <label for="file-input" class="file-btn">Browse file</label>
+                        <input type="file" id="file-input" accept=".txt,.pdf,.docx" hidden>
+                        <p id="file-name" class="file-name hidden"></p>
+                    </div>
+                </div>
+
+                <!-- Controls row -->
+                <div class="controls">
                     <select id="voice-select" class="voice-dropdown">
                         <option value="woman">Woman (Default)</option>
                         <option value="man">Man</option>
@@ -43,6 +65,7 @@
                 </div>
             </div>
 
+            <!-- Results panel -->
             <div id="results-panel" class="card glass hidden">
                 <div class="metrics">
                     <div class="metric-item">
@@ -57,7 +80,7 @@
                         <span id="confidence-text">0%</span>
                     </div>
                 </div>
-                
+
                 <div class="prosody-stats">
                     <div class="stat"><span class="label">Rate</span><span class="value" id="rate-val">140 wpm</span></div>
                     <div class="stat"><span class="label">Pitch</span><span class="value" id="pitch-val">0st</span></div>
@@ -68,7 +91,7 @@
                     <audio id="audioPlayer" controls></audio>
                 </div>
 
-                <!-- Per-segment emotion breakdown -->
+                <!-- Per-segment breakdown -->
                 <div id="segments-container" class="hidden">
                     <h4 class="segments-title">📊 Segment-level Emotion Breakdown</h4>
                     <div id="segments-list"></div>

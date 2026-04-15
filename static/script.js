@@ -1,49 +1,127 @@
-document.getElementById('speak-btn').addEventListener('click', async () => {
-    const textInput = document.getElementById('text').value;
-    if (!textInput.trim()) return;
+// ---------------------------------------------------------------------------
+// Tab switching
+// ---------------------------------------------------------------------------
+let activeTab = 'text';
 
-    const btn        = document.getElementById('speak-btn');
-    const btnText    = btn.querySelector('.btn-text');
-    const spinner    = btn.querySelector('.spinner');
-    const results    = document.getElementById('results-panel');
+function switchTab(tab) {
+    activeTab = tab;
+    document.getElementById('tab-text').classList.toggle('active', tab === 'text');
+    document.getElementById('tab-file').classList.toggle('active', tab === 'file');
+    document.getElementById('panel-text').classList.toggle('hidden', tab !== 'text');
+    document.getElementById('panel-file').classList.toggle('hidden', tab !== 'file');
+}
+
+// ---------------------------------------------------------------------------
+// Drag-and-drop file zone
+// ---------------------------------------------------------------------------
+let selectedFile = null;
+
+const dropZone  = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const fileNameEl = document.getElementById('file-name');
+
+dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('dragover');
+});
+
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+
+dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file) setFile(file);
+});
+
+fileInput.addEventListener('change', () => {
+    if (fileInput.files[0]) setFile(fileInput.files[0]);
+});
+
+// Clicking anywhere on drop zone triggers file browser (except the label itself)
+dropZone.addEventListener('click', (e) => {
+    if (e.target.tagName !== 'LABEL') fileInput.click();
+});
+
+function setFile(file) {
+    selectedFile = file;
+    fileNameEl.textContent = `📎 ${file.name}`;
+    fileNameEl.classList.remove('hidden');
+    dropZone.style.borderColor = 'var(--primary)';
+}
+
+// ---------------------------------------------------------------------------
+// Main generate button
+// ---------------------------------------------------------------------------
+document.getElementById('speak-btn').addEventListener('click', async () => {
+    const btn       = document.getElementById('speak-btn');
+    const btnText   = btn.querySelector('.btn-text');
+    const spinner   = btn.querySelector('.spinner');
+    const results   = document.getElementById('results-panel');
     const audioPlayer = document.getElementById('audioPlayer');
-    const voiceSelect = document.getElementById('voice-select').value;
+    const voice     = document.getElementById('voice-select').value;
+
+    // Validate inputs
+    if (activeTab === 'text' && !document.getElementById('text').value.trim()) {
+        alert('Please enter some text first.');
+        return;
+    }
+    if (activeTab === 'file' && !selectedFile) {
+        alert('Please select a file first.');
+        return;
+    }
 
     // Loading state
     btn.disabled = true;
-    btnText.textContent = "Analyzing...";
+    btnText.textContent = 'Analyzing…';
     spinner.classList.remove('hidden');
 
     try {
-        const response = await fetch('/api/synthesize', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: textInput, voice: voiceSelect, force_recompute: true })
-        });
+        let response;
 
-        if (!response.ok) {
-            const detail = await response.json().catch(() => ({}));
-            throw new Error(detail.detail || `Server error ${response.status}`);
+        if (activeTab === 'text') {
+            // ── JSON text request ──────────────────────────────────────
+            response = await fetch('/api/synthesize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    text: document.getElementById('text').value,
+                    voice,
+                    force_recompute: true
+                })
+            });
+        } else {
+            // ── Multipart file upload ──────────────────────────────────
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            formData.append('voice', voice);
+            formData.append('force_recompute', 'true');
+
+            response = await fetch('/api/synthesize-file', {
+                method: 'POST',
+                body: formData
+            });
         }
 
-        // ---- top-level headers (dominant segment) ----
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || `Server error ${response.status}`);
+        }
+
+        // ── Parse headers ──────────────────────────────────────────────
         const emotion    = response.headers.get('X-Detected-Emotion') || 'neutral';
         const confidence = parseFloat(response.headers.get('X-Emotion-Confidence')) || 0;
         const rate       = response.headers.get('X-Prosody-Rate') || '140';
         const pitch      = response.headers.get('X-Prosody-Pitch') || '0st';
         const volume     = response.headers.get('X-Prosody-Volume-db') || '+0dB';
 
-        // ---- per-segment breakdown ----
         let segments = [];
-        try {
-            const raw = response.headers.get('X-Segments');
-            if (raw) segments = JSON.parse(raw);
-        } catch (_) {}
+        try { segments = JSON.parse(response.headers.get('X-Segments') || '[]'); } catch (_) {}
 
         updateTopMetrics(emotion, confidence, rate, pitch, volume);
         renderSegments(segments);
 
-        // ---- audio ----
+        // ── Audio ──────────────────────────────────────────────────────
         const blob = await response.blob();
         audioPlayer.src = URL.createObjectURL(blob);
         results.classList.remove('hidden');
@@ -54,44 +132,44 @@ document.getElementById('speak-btn').addEventListener('click', async () => {
         alert('Error: ' + err.message);
     } finally {
         btn.disabled = false;
-        btnText.textContent = "Generate Speech";
+        btnText.textContent = 'Generate Speech';
         spinner.classList.add('hidden');
     }
 });
 
 // ---------------------------------------------------------------------------
-// Emotion colour palette  (covers GoEmotions 28 categories via grouping)
+// Emotion colour helpers
 // ---------------------------------------------------------------------------
 const EMOTION_COLORS = {
-    joy:      '#10b981',
-    love:     '#ec4899',
-    sadness:  '#3b82f6',
-    anger:    '#ef4444',
-    fear:     '#f59e0b',
-    surprise: '#d946ef',
-    neutral:  '#64748b',
+    joy:     '#10b981',
+    love:    '#ec4899',
+    sadness: '#3b82f6',
+    anger:   '#ef4444',
+    fear:    '#f59e0b',
+    surprise:'#d946ef',
+    neutral: '#64748b',
 };
 
-const JOY_GROUP      = ["joy","excitement","amusement","optimism"];
-const LOVE_GROUP     = ["love","caring","admiration","approval","pride","gratitude","relief"];
-const SADNESS_GROUP  = ["sadness","disappointment","embarrassment","grief","remorse"];
-const ANGER_GROUP    = ["anger","annoyance","disapproval","disgust"];
-const FEAR_GROUP     = ["fear","nervousness"];
-const SURPRISE_GROUP = ["surprise","realization","confusion","curiosity","desire"];
+const JOY_GRP      = ["joy","excitement","amusement","optimism"];
+const LOVE_GRP     = ["love","caring","admiration","approval","pride","gratitude","relief"];
+const SADNESS_GRP  = ["sadness","disappointment","embarrassment","grief","remorse"];
+const ANGER_GRP    = ["anger","annoyance","disapproval","disgust"];
+const FEAR_GRP     = ["fear","nervousness"];
+const SURPRISE_GRP = ["surprise","realization","confusion","curiosity","desire"];
 
-function emotionColor(emotion) {
-    const e = emotion.toLowerCase();
-    if (JOY_GROUP.includes(e))      return EMOTION_COLORS.joy;
-    if (LOVE_GROUP.includes(e))     return EMOTION_COLORS.love;
-    if (SADNESS_GROUP.includes(e))  return EMOTION_COLORS.sadness;
-    if (ANGER_GROUP.includes(e))    return EMOTION_COLORS.anger;
-    if (FEAR_GROUP.includes(e))     return EMOTION_COLORS.fear;
-    if (SURPRISE_GROUP.includes(e)) return EMOTION_COLORS.surprise;
+function emotionColor(e) {
+    e = e.toLowerCase();
+    if (JOY_GRP.includes(e))      return EMOTION_COLORS.joy;
+    if (LOVE_GRP.includes(e))     return EMOTION_COLORS.love;
+    if (SADNESS_GRP.includes(e))  return EMOTION_COLORS.sadness;
+    if (ANGER_GRP.includes(e))    return EMOTION_COLORS.anger;
+    if (FEAR_GRP.includes(e))     return EMOTION_COLORS.fear;
+    if (SURPRISE_GRP.includes(e)) return EMOTION_COLORS.surprise;
     return EMOTION_COLORS.neutral;
 }
 
 // ---------------------------------------------------------------------------
-// Update top-level dominant-emotion metrics
+// UI updaters
 // ---------------------------------------------------------------------------
 function updateTopMetrics(emotion, confidence, rate, pitch, volume) {
     const badge   = document.getElementById('emotion-badge');
@@ -106,7 +184,6 @@ function updateTopMetrics(emotion, confidence, rate, pitch, volume) {
     badge.textContent = emotion;
     badge.style.backgroundColor = color;
 
-    // Glow the card
     document.querySelectorAll('.card.glass').forEach(c => {
         c.style.boxShadow = `0 8px 32px 0 ${color}40`;
     });
@@ -119,18 +196,12 @@ function updateTopMetrics(emotion, confidence, rate, pitch, volume) {
     }, 100);
 }
 
-// ---------------------------------------------------------------------------
-// Render per-segment breakdown cards
-// ---------------------------------------------------------------------------
 function renderSegments(segments) {
     const container = document.getElementById('segments-container');
     const list      = document.getElementById('segments-list');
     list.innerHTML  = '';
 
-    if (!segments || segments.length === 0) {
-        container.classList.add('hidden');
-        return;
-    }
+    if (!segments || segments.length === 0) { container.classList.add('hidden'); return; }
 
     segments.forEach((seg, idx) => {
         const color = emotionColor(seg.emotion);
@@ -154,8 +225,7 @@ function renderSegments(segments) {
             </div>
             <div class="seg-bar-bg">
                 <div class="seg-bar" style="width:${pct}%; background:${color}"></div>
-            </div>
-        `;
+            </div>`;
 
         list.appendChild(card);
     });
