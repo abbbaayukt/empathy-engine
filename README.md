@@ -12,6 +12,7 @@ Unlike standard TTS tools that speak every sentence identically, the Empathy Eng
 
 - **Splits** input text into individual sentences and clauses
 - **Classifies** each segment independently into one of **28 nuanced emotions** (GoEmotions dataset: joy, grief, annoyance, admiration, curiosity, fear, disgust, and more)
+- **High-Precision Prosody**: Uses a custom **SSML-Bypass engine** to inject raw, high-quality prosody instructions (pitch, rate, volume) directly into Microsoft's Neural engine.
 - **Synthesizes** each segment with its own voice parameters using **Neural Microsoft Edge TTS** (high-quality, human-like) with automatic offline fallback to `pyttsx3`.
 - **Supports File Inputs**: Directly upload `.txt`, `.pdf`, or `.docx` files for emotional narration.
 - Exposes a **FastAPI REST endpoint**, a **CLI tool**, and a **premium animated Web UI** with drag-and-drop support.
@@ -165,7 +166,14 @@ This prints each sample sentence from `test_emotions.txt` with its detected emot
 
 ## Design Choices & Emotion-to-Voice Mapping Logic
 
-### Emotion Model
+### The SSML Breakthrough (Bypassing Library Limitations)
+
+One of the largest technical hurdles in the project was a bug in the standard `edge-tts` library that force-escaped SSML characters, causing the neural engine to "read the tags" out loud. 
+
+We solved this by implementing a custom **`SSMLCommunicate`** class (in `tts.py`) that:
+1. **Inherits** from the base library but overrides the internal streaming logic.
+2. **Bypasses Auto-Escaping**: Prevents the library from corrupting `<speak>` and `<prosody>` tags.
+3. **Synchronous/Asynchronous Hybrid**: Maintains high performance while ensuring perfect emotional injection.
 
 We use **`SamLowe/roberta-base-go_emotions`** — a RoBERTa model fine-tuned on Google's [GoEmotions](https://github.com/google-research/google-research/tree/master/goemotions) dataset (58k Reddit comments, 28 emotion labels). This was chosen over simpler 6-class models because:
 
@@ -209,13 +217,18 @@ The 28 GoEmotions labels are first grouped into 6 prosodic archetypes:
 
 We now primarily use **Edge-TTS Neural Voices** for professional, human-like quality. `pyttsx3` is kept as a local fallback.
 
-| Profile | Neural Voice | SAPI5 (Fallback) |
-|---------|--------------|------------------|
-| Woman | en-US-JennyNeural | Zira (female) |
-| Man | en-US-GuyNeural | David (male) |
-| Girl | en-US-JennyNeural (+60Hz) | Zira (+8st) |
-| Boy | en-US-AndrewNeural (+30Hz) | David (+8st) |
-| Child | en-US-AnaNeural (Genuine) | Zira (+10st) |
+**Unit Mapping Note:** While internally calculated as `st` (semitones) and `dB` (decibels) for consistency, these are mapped to **Relative Percentages** for the Edge engine for maximum reliability:
+- **Pitch**: 1 semitone ≈ +6% shift.
+- **Volume**: 1 dB ≈ +7% shift.
+- **Rate**: Expressed as relative change from base 140 WPM.
+
+| Profile | Neural Voice | Edge Pitch Offset | SAPI5 (Fallback) |
+|---------|--------------|-------------------|------------------|
+| Woman | en-US-JennyNeural | 0% | Zira (female) |
+| Man | en-US-GuyNeural | 0% | David (male) |
+| Girl | en-US-JennyNeural | +30% (+5st) | Zira (+8st) |
+| Boy | en-US-AndrewNeural | +18% (+3st) | David (+8st) |
+| Child | en-US-AnaNeural | 0% (Genuine) | Zira (+10st) |
 
 ### Caching
 
