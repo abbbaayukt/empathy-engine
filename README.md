@@ -54,7 +54,7 @@ empathy-engine/
 ### Step 1 — Clone the Repository
 
 ```bash
-git clone https://github.com/<your-username>/empathy-engine.git
+git clone https://github.com/abbbaayukt/empathy-engine.git
 cd empathy-engine
 ```
 
