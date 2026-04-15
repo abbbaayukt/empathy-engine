@@ -7,3 +7,4 @@ pydub
 pydantic
 PyPDF2
 python-docx
+edge-tts

@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from emotion_model import get_classifier
 from mapper import map_emotion_to_params, db_to_float_volume
-from tts import synthesize_segmented, synthesize_local, get_available_voices
+from tts import synthesize_edge_segmented, synthesize_segmented, get_available_voices
 from file_reader import extract_text_from_bytes, SUPPORTED_EXTENSIONS
 
 logging.basicConfig(level=logging.INFO)
@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Empathy Engine", description="Text to Emotionally Modulated Speech")
 
-# Mount static folder for the frontend UI
 static_path = os.path.join(os.path.dirname(__file__), "static")
 if not os.path.exists(static_path):
     os.makedirs(static_path)
@@ -32,54 +31,38 @@ class SynthesizeRequest(BaseModel):
     force_recompute: bool = False
 
 
-@app.post("/api/synthesize")
-async def synthesize_endpoint(req: SynthesizeRequest):
-    if not req.text.strip():
-        raise HTTPException(status_code=400, detail="Text cannot be empty.")
+# ---------------------------------------------------------------------------
+# Shared response builder  (async — uses neural Edge-TTS)
+# ---------------------------------------------------------------------------
+
+async def _build_response(text: str, voice: str, force: bool) -> StreamingResponse:
+    """Run edge-tts segmented synthesis and pack result as a StreamingResponse."""
     try:
-        logger.info(f"Synthesizing (segmented): voice={req.voice}")
-        return _build_audio_response(req.text, req.voice, req.force_recompute)
-    except HTTPException:
-        raise
+        audio_bytes, segment_meta = await synthesize_edge_segmented(
+            text, voice_selection=voice, force_recompute=force
+        )
     except Exception as e:
-        logger.error(f"Synthesis error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/voices")
-def get_voices():
-    voices = get_available_voices()
-    return JSONResponse(content={"voices": voices})
-
-
-@app.get("/api/supported-formats")
-def supported_formats():
-    return JSONResponse(content={"formats": sorted(SUPPORTED_EXTENSIONS)})
-
-
-def _build_audio_response(text: str, voice: str, force_recompute: bool):
-    """Shared logic: synthesize text and return a StreamingResponse."""
-    audio_bytes, segment_meta = synthesize_segmented(
-        text,
-        voice_selection=voice,
-        force_recompute=force_recompute,
-    )
+        logger.error(f"Edge-TTS failed, attempting pyttsx3 fallback: {e}")
+        # Fallback to pyttsx3 (offline)
+        audio_bytes, segment_meta = synthesize_segmented(
+            text, voice_selection=voice, force_recompute=force
+        )
 
     if not audio_bytes:
         raise HTTPException(status_code=500, detail="TTS Engine produced no audio.")
 
     dominant = segment_meta[0] if segment_meta else {
         "emotion": "neutral", "confidence": 1.0,
-        "rate": 140, "pitch": "0st", "volume": "+0dB"
+        "rate": 140, "pitch": "0st", "volume": "+0dB",
     }
 
     headers = {
-        "X-Detected-Emotion":   dominant["emotion"],
-        "X-Emotion-Confidence": str(dominant["confidence"]),
-        "X-Prosody-Rate":       str(dominant["rate"]),
-        "X-Prosody-Pitch":      dominant["pitch"],
-        "X-Prosody-Volume-db":  dominant["volume"],
-        "X-Segments":           json.dumps(segment_meta),
+        "X-Detected-Emotion":    dominant["emotion"],
+        "X-Emotion-Confidence":  str(dominant["confidence"]),
+        "X-Prosody-Rate":        str(dominant["rate"]),
+        "X-Prosody-Pitch":       dominant["pitch"],
+        "X-Prosody-Volume-db":   dominant["volume"],
+        "X-Segments":            json.dumps(segment_meta),
         "Access-Control-Expose-Headers": (
             "X-Detected-Emotion,X-Emotion-Confidence,"
             "X-Prosody-Rate,X-Prosody-Pitch,"
@@ -87,11 +70,31 @@ def _build_audio_response(text: str, voice: str, force_recompute: bool):
         ),
     }
 
-    return StreamingResponse(
-        io.BytesIO(audio_bytes),
-        media_type="audio/wav",
-        headers=headers,
-    )
+    # Edge-TTS outputs MP3; pyttsx3 fallback outputs WAV
+    media = "audio/mpeg" if audio_bytes[:3] == b"\xff\xfb" or audio_bytes[:3] == b"ID3" or audio_bytes[:2] == b"\xff\xf3" else "audio/wav"
+    # Simpler: always check for ID3/MPEG header
+    is_mp3 = audio_bytes[:3] in (b"ID3",) or (len(audio_bytes) > 1 and audio_bytes[0] == 0xFF and (audio_bytes[1] & 0xE0) == 0xE0)
+    media = "audio/mpeg" if is_mp3 else "audio/wav"
+
+    return StreamingResponse(io.BytesIO(audio_bytes), media_type=media, headers=headers)
+
+
+# ---------------------------------------------------------------------------
+# API Endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/api/synthesize")
+async def synthesize_endpoint(req: SynthesizeRequest):
+    if not req.text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty.")
+    logger.info(f"POST /api/synthesize | voice={req.voice} | {len(req.text)} chars")
+    try:
+        return await _build_response(req.text, req.voice, req.force_recompute)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Synthesis error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/synthesize-file")
@@ -100,19 +103,12 @@ async def synthesize_file_endpoint(
     voice: str = Form(default="woman"),
     force_recompute: bool = Form(default=False),
 ):
-    """
-    Upload a .txt, .pdf, or .docx file; extract its text; synthesize
-    emotionally-modulated speech — exactly like /api/synthesize.
-    """
     filename = file.filename or ""
     _, ext = os.path.splitext(filename)
     if ext.lower() not in SUPPORTED_EXTENSIONS:
         raise HTTPException(
             status_code=415,
-            detail=(
-                f"Unsupported file type '{ext}'. "
-                f"Accepted: {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
-            ),
+            detail=f"Unsupported file type '{ext}'. Accepted: {', '.join(sorted(SUPPORTED_EXTENSIONS))}",
         )
 
     try:
@@ -124,13 +120,27 @@ async def synthesize_file_endpoint(
     if not text.strip():
         raise HTTPException(status_code=400, detail="File contains no readable text.")
 
-    logger.info(f"File upload '{filename}' → {len(text)} chars | voice={voice}")
+    logger.info(f"POST /api/synthesize-file | '{filename}' | {len(text)} chars | voice={voice}")
 
     try:
-        return _build_audio_response(text, voice, force_recompute)
+        return await _build_response(text, voice, force_recompute)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"File synthesis error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/voices")
+def get_voices():
+    from tts import EDGE_VOICES
+    edge = [{"id": k, "name": f"{k.capitalize()} (Neural – {v[0]})"} for k, v in EDGE_VOICES.items()]
+    return JSONResponse(content={"voices": edge})
+
+
+@app.get("/api/supported-formats")
+def supported_formats():
+    return JSONResponse(content={"formats": sorted(SUPPORTED_EXTENSIONS)})
 
 
 @app.get("/")

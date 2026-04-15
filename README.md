@@ -12,8 +12,9 @@ Unlike standard TTS tools that speak every sentence identically, the Empathy Eng
 
 - **Splits** input text into individual sentences and clauses
 - **Classifies** each segment independently into one of **28 nuanced emotions** (GoEmotions dataset: joy, grief, annoyance, admiration, curiosity, fear, disgust, and more)
-- **Synthesizes** each segment with its own voice parameters, then **concatenates** the results into a single seamless WAV file
-- Exposes a **FastAPI REST endpoint**, a **CLI tool**, and a **premium animated Web UI**
+- **Synthesizes** each segment with its own voice parameters using **Neural Microsoft Edge TTS** (high-quality, human-like) with automatic offline fallback to `pyttsx3`.
+- **Supports File Inputs**: Directly upload `.txt`, `.pdf`, or `.docx` files for emotional narration.
+- Exposes a **FastAPI REST endpoint**, a **CLI tool**, and a **premium animated Web UI** with drag-and-drop support.
 
 ---
 
@@ -24,7 +25,8 @@ empathy-engine/
 ├── app.py              # FastAPI server (REST API + UI host)
 ├── emotion_model.py    # Transformer-based emotion classifier
 ├── mapper.py           # Emotion → prosody mapping logic
-├── tts.py              # TTS synthesis (pyttsx3, per-segment stitching)
+├── tts.py              # TTS synthesis (Edge-TTS + pyttsx3 fallback)
+├── file_reader.py      # PDF, DOCX, and TXT extraction logic
 ├── cli.py              # Command-line interface
 ├── test_mapping.py     # Mapping unit tests
 ├── test_emotions.txt   # Sample sentences covering all 28 emotions
@@ -44,8 +46,8 @@ empathy-engine/
 ### Prerequisites
 
 - **Python 3.10 or higher**
-- Windows (pyttsx3 uses SAPI5 voices — works best on Windows; on Linux/macOS eSpeak is used)
-- Internet connection for the **first run** (downloads the ~500 MB RoBERTa model from Hugging Face)
+- Internet connection (required for **Neural voices** and first-run model download)
+- Windows (Note: `pyttsx3` fallback uses SAPI5 voices native to Windows)
 
 ---
 
@@ -89,11 +91,12 @@ http://localhost:8000/ui
 ```
 
 **Features of the Web UI:**
-- Text input area
-- Voice profile selector: Woman / Man / Girl / Boy / Child
-- Animated emotion badge + confidence bar
-- Per-segment emotion breakdown panel (shows each clause's detected emotion, rate, pitch, volume)
-- Embedded HTML5 audio player
+- **Two Input Modes**: ✏️ Type Text or 📄 Upload File (Drag & Drop)
+- **Neural Voice Selection**: Human-like voices (Jenny, Guy, Ana, etc.)
+- **Voice Profiles**: Woman / Man / Girl / Boy / Child
+- **Live Metrics**: Animated emotion badge + confidence bar
+- **Breakdown**: Per-segment breakdown panel showing each clause's detected emotion and parameters
+- **Player**: Embedded HTML5 audio player (MP3/WAV)
 
 ---
 
@@ -124,8 +127,10 @@ curl -X POST http://localhost:8000/api/synthesize \
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/synthesize` | Synthesize emotional speech |
-| `GET`  | `/api/voices`     | List available local voices |
+| `POST` | `/api/synthesize` | Synthesize text input |
+| `POST` | `/api/synthesize-file` | Synthesize from uploaded file |
+| `GET`  | `/api/voices` | List available neural voices |
+| `GET`  | `/api/supported-formats` | List allowed file extensions |
 
 **Request body:**
 ```json
@@ -174,8 +179,8 @@ Rather than classifying the whole input at once, the engine:
 1. Splits on sentence terminals (`.`, `!`, `?`) first
 2. Sub-splits long sentences on comma/semicolon clause boundaries
 3. Classifies **each clause independently**
-4. Synthesizes each clause with its own prosody
-5. Concatenates all WAV chunks using Python's `wave` module
+4. Builds an **SSML document** with per-segment `<prosody>` tags
+5. Synthesizes via **Microsoft Edge Neural TTS** (or concatenates WAVs for fallback)
 
 This means a single input like:
 > *"I just won the lottery! But I'm devastated about losing my best friend."*
@@ -202,17 +207,15 @@ The 28 GoEmotions labels are first grouped into 6 prosodic archetypes:
 - Input: *"Get out of my house!"* → `anger (0.91)` → Rate = 140 × 1.455 = **204 WPM**, Volume = **+4 dB**
 - Input: *"Are you okay?"* → `nervousness (0.72)` → Rate = 140 × 1.144 = **160 WPM**, Volume = **−1 dB**
 
-### Voice Profiles
+We now primarily use **Edge-TTS Neural Voices** for professional, human-like quality. `pyttsx3` is kept as a local fallback.
 
-pyttsx3 on Windows uses the SAPI5 engine. We detect `Microsoft David` (male) and `Microsoft Zira` (female) by name, and use SAPI5 XML pitch tags (`<pitch absmiddle='N'>`) to simulate child/boy/girl voices at higher pitches.
-
-| Profile | Base Voice | SAPI5 Pitch Offset |
-|---------|-----------|-------------------|
-| Woman | Zira (female) | 0 |
-| Man | David (male) | 0 |
-| Girl | Zira (female) | +8 |
-| Boy | David (male) | +8 |
-| Child | Zira (female) | +10 |
+| Profile | Neural Voice | SAPI5 (Fallback) |
+|---------|--------------|------------------|
+| Woman | en-US-JennyNeural | Zira (female) |
+| Man | en-US-GuyNeural | David (male) |
+| Girl | en-US-JennyNeural (+60Hz) | Zira (+8st) |
+| Boy | en-US-AndrewNeural (+30Hz) | David (+8st) |
+| Child | en-US-AnaNeural (Genuine) | Zira (+10st) |
 
 ### Caching
 
@@ -228,19 +231,23 @@ Every synthesized segment is cached as a WAV file named after an MD5 hash of `(t
 | `uvicorn` | ASGI server |
 | `transformers` | Hugging Face model inference |
 | `torch` | PyTorch backend for transformer |
-| `pyttsx3` | Local offline TTS engine |
-| `pydub` | (Available for advanced audio post-processing) |
-| `pydantic` | Request/response validation |
+| `edge-tts` | Neural human-like speech engine |
+| `pyttsx3` | Local offline TTS fallback |
+| `PyPDF2` | PDF text extraction |
+| `python-docx` | DOCX text extraction |
+| `pydub` | Advanced audio processing |
+| `pydantic` | Data validation |
 
 ---
 
 ## Bonus Features Implemented
 
+- ✅ **Human-like Neural Voices** — Professional speech quality via Edge-TTS
 - ✅ **28 granular emotion categories** (GoEmotions, far beyond 3-class)
-- ✅ **Intensity scaling** — confidence score linearly modulates all three parameters
+- ✅ **PDF & DOCX Support** — Extract and narrate entire documents
+- ✅ **Intensity scaling** — confidence score linearly modulates all parameters
 - ✅ **Per-sentence emotion detection** — different prosody within a single input
-- ✅ **Premium Web UI** — glassmorphism dark theme, animated waveform logo, segment breakdown cards
-- ✅ **Multiple voice profiles** — Man / Woman / Girl / Boy / Child
-- ✅ **SSML/SAPI5 injection** — pitch tags injected directly into the SAPI5 speech stream
-- ✅ **Audio caching** — MD5-based disk cache to avoid redundant synthesis
+- ✅ **Tabbed UI with Drag & Drop** — premium glassmorphism dark theme
+- ✅ **Automatic Fallback** — works offline via pyttsx3 if internet is unavailable
+- ✅ **Audio caching** — MD5-based disk cache for both MP3 and WAV
 - ✅ **CLI + REST API** — both interfaces fully functional
