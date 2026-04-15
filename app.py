@@ -38,15 +38,30 @@ class SynthesizeRequest(BaseModel):
 async def _build_response(text: str, voice: str, force: bool) -> StreamingResponse:
     """Run edge-tts segmented synthesis and pack result as a StreamingResponse."""
     try:
-        audio_bytes, segment_meta = await synthesize_edge_segmented(
-            text, voice_selection=voice, force_recompute=force
-        )
+        from tts import _build_ssml, split_into_segments, EDGE_VOICES, _edge_synth_async
+        from emotion_model import get_classifier
+        from mapper import map_emotion_to_params
+
+        # We manually build segment meta here to log the SSML before synthesis
+        voice_name, pitch_offset = EDGE_VOICES.get(voice, EDGE_VOICES["woman"])
+        classifier = get_classifier()
+        segments = split_into_segments(text)
+        segment_meta = []
+        for s in segments:
+            emotion, conf, _ = classifier.detect_emotion(s)
+            r, p, v = map_emotion_to_params(emotion, conf)
+            segment_meta.append({"text": s, "emotion": emotion, "confidence": conf, "rate": r, "pitch": p, "volume": v})
+
+        ssml = _build_ssml(segment_meta, voice_name, pitch_offset)
+        logger.info(f"Generated SSML for synthesis:\n{ssml[:500]}...")
+
+        # Actual synthesis (we use the internal async runner since we already have the SSML)
+        audio_bytes = await _edge_synth_async(ssml)
     except Exception as e:
         logger.error(f"Edge-TTS failed, attempting pyttsx3 fallback: {e}")
-        # Fallback to pyttsx3 (offline)
-        audio_bytes, segment_meta = synthesize_segmented(
-            text, voice_selection=voice, force_recompute=force
-        )
+        # Build segment_meta again for fallback (unlikely path but safe)
+        from tts import synthesize_segmented
+        audio_bytes, segment_meta = synthesize_segmented(text, voice_selection=voice, force_recompute=force)
 
     if not audio_bytes:
         raise HTTPException(status_code=500, detail="TTS Engine produced no audio.")

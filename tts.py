@@ -22,11 +22,11 @@ except Exception as e:
 # Edge-TTS voice map (neural voices — very human sounding, free, no API key)
 # ---------------------------------------------------------------------------
 EDGE_VOICES = {
-    "woman": ("en-US-JennyNeural",   0),   # (voice_name, base_pitch_offset_hz)
+    "woman": ("en-US-JennyNeural",   0),   # (voice_name, semitone_offset)
     "man":   ("en-US-GuyNeural",     0),
-    "girl":  ("en-US-JennyNeural",  60),   # same voice, pushed up in pitch
-    "boy":   ("en-US-AndrewNeural", 30),
-    "child": ("en-US-AnaNeural",     0),   # AnaNeural is a genuine child voice
+    "girl":  ("en-US-JennyNeural",   5),   # Jenny + 5 semitones = energetic girl
+    "boy":   ("en-US-AndrewNeural",  3),   # Andrew + 3 semitones = young boy
+    "child": ("en-US-AnaNeural",     0),   # Ana is natively professional child voice
 }
 
 # ---------------------------------------------------------------------------
@@ -38,14 +38,14 @@ def _rate_to_pct(wpm: int, base: int = 140) -> str:
     pct = int((wpm - base) / base * 100)
     return f"+{pct}%" if pct >= 0 else f"{pct}%"
 
-def _st_to_hz(pitch_str: str, offset_hz: int = 0) -> str:
-    """'+2st' → '+80Hz' (40 Hz per semitone, rough but effective)"""
+def _map_pitch(pitch_str: str, offset_st: int = 0) -> str:
+    """'+2st' + 5st offset → '+7st' (Supported natively by Azure SSML)"""
     try:
         val = int(pitch_str.replace("st", ""))
     except ValueError:
         val = 0
-    total = val * 40 + offset_hz
-    return f"+{total}Hz" if total >= 0 else f"{total}Hz"
+    total = val + offset_st
+    return f"+{total}st" if total >= 0 else f"{total}st"
 
 def _db_to_pct(vol_str: str) -> str:
     """'+3dB' → '+21%' (7 % per dB, perceptual approximation)"""
@@ -60,7 +60,8 @@ def _xml_escape(text: str) -> str:
     return (text.replace("&", "&amp;")
                 .replace("<", "&lt;")
                 .replace(">", "&gt;")
-                .replace('"', "&quot;"))
+                .replace('"', "&quot;")
+                .replace("'", "&apos;"))
 
 # ---------------------------------------------------------------------------
 # Sentence segmentation
@@ -88,31 +89,36 @@ def split_into_segments(text: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def _build_ssml(segment_meta: list[dict], voice_name: str, pitch_offset: int) -> str:
-    """Build an SSML document with per-segment <prosody> tags."""
+    """Build a valid Azure-compliant SSML document with per-segment prosody."""
+    # Note: Edge TTS / Azure SSML REQUIRE a <voice> tag inside <speak>
     parts = [
-        '<speak version="1.0" '
-        'xmlns="http://www.w3.org/2001/10/synthesis" '
-        'xml:lang="en-US">'
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">',
+        f'  <voice name="{voice_name}">',
     ]
     for seg in segment_meta:
         rate  = _rate_to_pct(seg["rate"])
-        pitch = _st_to_hz(seg["pitch"], pitch_offset)
+        pitch = _map_pitch(seg["pitch"], pitch_offset)
         vol   = _db_to_pct(seg["volume"])
         text  = _xml_escape(seg["text"])
-        # Small trailing pause between segments for natural breathing
+        
+        # We use prosody for rate, pitch, and volume modulation
         parts.append(
-            f'<prosody rate="{rate}" pitch="{pitch}" volume="{vol}">'
+            f'    <prosody rate="{rate}" pitch="{pitch}" volume="{vol}">'
             f'{text}'
             f'</prosody>'
-            f'<break time="200ms"/>'
+            f'<break time="150ms"/>'
         )
+    parts.append('  </voice>')
     parts.append("</speak>")
-    return "".join(parts)
+    return "\n".join(parts)
 
 
-async def _edge_synth_async(ssml: str, voice_name: str) -> bytes:
+async def _edge_synth_async(ssml: str) -> bytes:
     """Async: stream audio from edge-tts and return raw MP3 bytes."""
-    communicate = edge_tts.Communicate(ssml, voice=voice_name)
+    # When providing SSML, we DON'T pass the voice parameter to Communicate
+    # as it's already defined inside the <voice> tag in the SSML.
+    communicate = edge_tts.Communicate(ssml)
     chunks = []
     async for chunk in communicate.stream():
         if chunk["type"] == "audio":
@@ -166,7 +172,7 @@ async def synthesize_edge_segmented(
 
     # Build SSML + synthesize
     ssml = _build_ssml(segment_meta, voice_name, pitch_offset)
-    audio_bytes = await _edge_synth_async(ssml, voice_name)
+    audio_bytes = await _edge_synth_async(ssml)
 
     # Cache result
     with open(cache_path, "wb") as f:
