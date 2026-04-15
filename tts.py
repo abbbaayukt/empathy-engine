@@ -90,11 +90,10 @@ def split_into_segments(text: str) -> list[str]:
 
 def _build_ssml(segment_meta: list[dict], voice_name: str, pitch_offset: int) -> str:
     """Build a valid Azure-compliant SSML document with per-segment prosody."""
-    # Note: Edge TTS / Azure SSML REQUIRE a <voice> tag inside <speak>
+    # IMPORTANT: The string must start EXACTLY with <speak for edge-tts to parse it as SSML.
     parts = [
-        '<?xml version="1.0" encoding="UTF-8"?>',
         '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">',
-        f'  <voice name="{voice_name}">',
+        f'  <voice name="{voice_name}">'
     ]
     for seg in segment_meta:
         rate  = _rate_to_pct(seg["rate"])
