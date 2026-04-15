@@ -1,0 +1,34 @@
+# Granular Emotion Testing Dataset
+
+## Joy / Happy
+1. I just got the promotion I have been working so hard for!
+2. This is the best feeling in the entire world.
+3. Oh my goodness, I am so unconditionally happy for you both!
+
+## Sadness
+4. The news completely broke my heart. I am so devastated.
+5. Everything feels so empty since they left.
+6. I can't stop crying, it just hurts too much.
+
+## Anger / Frustrated
+7. I am absolutely furious about how this was handled.
+8. Get out of my face right now before I lose my temper!
+9. This is the most ridiculous and unfair situation ever!
+
+## Surprise / Shock
+10. Wow! I honestly didn't see that coming at all!
+11. Are you serious? I can't believe my eyes!
+12. Wait, what? When did this happen?
+
+## Fear / Anxious
+13. I'm really scared about what might happen tomorrow.
+14. Please tell me we are safe here, I can hear footsteps.
+15. This is completely terrifying, we need to leave immediately!
+
+## Love / Caring
+16. You mean the absolute world to me, never forget that.
+17. I care about you so deeply, more than words can say.
+
+## Neutral
+18. The water boils at 100 degrees celsius under standard pressure.
+19. Please pass the salt from the table.

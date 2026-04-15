@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Empathy Engine | Expressive Speech AI</title>
+    <meta name="description" content="Synthesize expressive speech with nuanced emotion detection using AI.">
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Outfit:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="blob-bg"></div>
+    <div class="container">
+        <header>
+            <div class="logo-container">
+                <div class="waveform-logo">
+                    <span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span>
+                </div>
+                <h1>Empathy Engine</h1>
+            </div>
+            <p class="subtitle">Context-aware emotional prosody synthesis</p>
+        </header>
+
+        <main>
+            <div class="card glass">
+                <div class="input-group">
+                    <label for="text">What should I say?</label>
+                    <textarea id="text" rows="4" placeholder="Type something emotional here... like 'I just won the lottery!' or 'I'm so worried about what might happen...'"></textarea>
+                </div>
+
+                <div class="controls" style="display: flex; gap: 1rem; align-items: center; justify-content: flex-end;">
+                    <select id="voice-select" class="voice-dropdown">
+                        <option value="woman">Woman (Default)</option>
+                        <option value="man">Man</option>
+                        <option value="girl">Girl</option>
+                        <option value="boy">Boy</option>
+                        <option value="child">Child</option>
+                    </select>
+                    <button id="speak-btn" class="primary-btn">
+                        <span class="btn-text">Generate Speech</span>
+                        <span class="spinner hidden"></span>
+                    </button>
+                </div>
+            </div>
+
+            <div id="results-panel" class="card glass hidden">
+                <div class="metrics">
+                    <div class="metric-item">
+                        <h4>Dominant Emotion</h4>
+                        <div class="badge" id="emotion-badge">Neutral</div>
+                    </div>
+                    <div class="metric-item">
+                        <h4>Confidence</h4>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="confidence-bar"></div>
+                        </div>
+                        <span id="confidence-text">0%</span>
+                    </div>
+                </div>
+                
+                <div class="prosody-stats">
+                    <div class="stat"><span class="label">Rate</span><span class="value" id="rate-val">140 wpm</span></div>
+                    <div class="stat"><span class="label">Pitch</span><span class="value" id="pitch-val">0st</span></div>
+                    <div class="stat"><span class="label">Volume</span><span class="value" id="vol-val">+0dB</span></div>
+                </div>
+
+                <div class="player-container">
+                    <audio id="audioPlayer" controls></audio>
+                </div>
+
+                <!-- Per-segment emotion breakdown -->
+                <div id="segments-container" class="hidden">
+                    <h4 class="segments-title">📊 Segment-level Emotion Breakdown</h4>
+                    <div id="segments-list"></div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
