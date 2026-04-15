@@ -3,9 +3,10 @@ import re
 import io
 import wave
 import hashlib
-import pyttsx3
 import asyncio
 import edge_tts
+from typing import AsyncGenerator
+import pyttsx3
 
 AUDIO_CACHE_DIR = os.path.join(os.path.dirname(__file__), "audio_cache")
 if not os.path.exists(AUDIO_CACHE_DIR):
@@ -106,11 +107,80 @@ def _build_ssml(segment_meta: list[dict], voice_name: str, pitch_offset: int) ->
     return "".join(parts).strip()
 
 
+class SSMLCommunicate(edge_tts.Communicate):
+    """
+    Subclass of edge_tts.Communicate that allows sending RAW SSML.
+    Bypasses the library's internal escaping and wrapping.
+    """
+    def __init__(self, ssml: str, **kwargs):
+        # We pass a placeholder because we will override the transmission anyway.
+        super().__init__("placeholder", **kwargs)
+        self.ssml = ssml
+
+    async def stream(self) -> AsyncGenerator[edge_tts.typing.TTSChunk, None]:
+        """Override stream to send our raw SSML directly."""
+        if self.state["stream_was_called"]:
+            raise RuntimeError("stream can only be called once.")
+        self.state["stream_was_called"] = True
+
+        from edge_tts.communicate import (
+            connect_id, date_to_string, ssml_headers_plus_data, 
+            WSS_URL, WSS_HEADERS, SEC_MS_GEC_VERSION, DRM, _SSL_CTX, 
+            get_headers_and_data, UnexpectedResponse, UnknownResponse, WebSocketError
+        )
+        import aiohttp
+        import json
+
+        async def send_command_request():
+            await websocket.send_str(
+                f"X-Timestamp:{date_to_string()}\r\n"
+                "Content-Type:application/json; charset=utf-8\r\n"
+                "Path:speech.config\r\n\r\n"
+                '{"context":{"synthesis":{"audio":{"metadataoptions":{'
+                '"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"'
+                "},"
+                '"outputFormat":"audio-24khz-48kbitrate-mono-mp3"'
+                "}}}}\r\n"
+            )
+
+        async def send_ssml_request():
+            # THIS IS THE FIX: We send self.ssml DIRECTLY, bypassing mkssml()
+            await websocket.send_str(
+                ssml_headers_plus_data(connect_id(), date_to_string(), self.ssml)
+            )
+
+        audio_was_received = False
+        async with aiohttp.ClientSession(
+            trust_env=True, timeout=self.session_timeout
+        ) as session, session.ws_connect(
+            f"{WSS_URL}&ConnectionId={connect_id()}"
+            f"&Sec-MS-GEC={DRM.generate_sec_ms_gec()}"
+            f"&Sec-MS-GEC-Version={SEC_MS_GEC_VERSION}",
+            compress=15, headers=DRM.headers_with_muid(WSS_HEADERS), ssl=_SSL_CTX
+        ) as websocket:
+            await send_command_request()
+            await send_ssml_request()
+
+            async for received in websocket:
+                if received.type == aiohttp.WSMsgType.TEXT:
+                    encoded_data = received.data.encode("utf-8")
+                    parameters, data = get_headers_and_data(encoded_data, encoded_data.find(b"\r\n\r\n"))
+                    path = parameters.get(b"Path")
+                    if path == b"turn.end": break
+                    elif path == b"audio.metadata": pass # ignored for now
+                elif received.type == aiohttp.WSMsgType.BINARY:
+                    header_length = int.from_bytes(received.data[:2], "big")
+                    parameters, data = get_headers_and_data(received.data, header_length)
+                    if parameters.get(b"Path") == b"audio":
+                        audio_was_received = True
+                        yield {"type": "audio", "data": data}
+
+        if not audio_was_received:
+            raise RuntimeError("No audio received from Edge TTS.")
+
 async def _edge_synth_async(ssml: str, voice: str) -> bytes:
-    """Async: stream audio from edge-tts and return raw MP3 bytes."""
-    # We pass the 'voice' explicitly to the constructor to 'prime' the connection
-    # to the correct regional server, even though we use SSML.
-    communicate = edge_tts.Communicate(ssml, voice=voice)
+    """Async: stream audio using OUR CUSTOM SSMLCommunicate."""
+    communicate = SSMLCommunicate(ssml, voice=voice)
     chunks = []
     async for chunk in communicate.stream():
         if chunk["type"] == "audio":
@@ -134,9 +204,9 @@ async def synthesize_edge_segmented(
 
     voice_name, pitch_offset = EDGE_VOICES.get(voice_selection, EDGE_VOICES["woman"])
 
-    # Cache (v3 signature to clear stale bugs)
+    # Cache (v4 signature to clear stale bugs - BYPASSING LOGIC)
     cache_key = hashlib.md5(
-        f"{full_text}_{voice_selection}_edge_v3".encode()
+        f"{full_text}_{voice_selection}_edge_v4".encode()
     ).hexdigest()
     cache_path = os.path.join(AUDIO_CACHE_DIR, f"{cache_key}.mp3")
 
