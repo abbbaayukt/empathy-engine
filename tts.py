@@ -89,28 +89,20 @@ def split_into_segments(text: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def _build_ssml(segment_meta: list[dict], voice_name: str, pitch_offset: int) -> str:
-    """Build a valid Azure-compliant SSML document with per-segment prosody."""
-    # IMPORTANT: The string must start EXACTLY with <speak for edge-tts to parse it as SSML.
+    """Build a MINIFIED Azure-compliant SSML document."""
+    # Note: MINIFIED string starting with <speak is most robust for edge-tts.
     parts = [
-        '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">',
-        f'  <voice name="{voice_name}">'
+        f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">',
+        f'<voice name="{voice_name}">'
     ]
     for seg in segment_meta:
         rate  = _rate_to_pct(seg["rate"])
         pitch = _map_pitch(seg["pitch"], pitch_offset)
         vol   = _db_to_pct(seg["volume"])
         text  = _xml_escape(seg["text"])
-        
-        # We use prosody for rate, pitch, and volume modulation
-        parts.append(
-            f'    <prosody rate="{rate}" pitch="{pitch}" volume="{vol}">'
-            f'{text}'
-            f'</prosody>'
-            f'<break time="150ms"/>'
-        )
-    parts.append('  </voice>')
-    parts.append("</speak>")
-    return "\n".join(parts)
+        parts.append(f'<prosody rate="{rate}" pitch="{pitch}" volume="{vol}">{text}</prosody><break time="150ms"/>')
+    parts.append('</voice></speak>')
+    return "".join(parts).strip()
 
 
 async def _edge_synth_async(ssml: str) -> bytes:
@@ -141,9 +133,9 @@ async def synthesize_edge_segmented(
 
     voice_name, pitch_offset = EDGE_VOICES.get(voice_selection, EDGE_VOICES["woman"])
 
-    # Cache
+    # Cache (v2 signature to clear stale bugs)
     cache_key = hashlib.md5(
-        f"{full_text}_{voice_selection}_edge".encode()
+        f"{full_text}_{voice_selection}_edge_v2".encode()
     ).hexdigest()
     cache_path = os.path.join(AUDIO_CACHE_DIR, f"{cache_key}.mp3")
 

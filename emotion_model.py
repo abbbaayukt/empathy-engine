@@ -12,11 +12,12 @@ class EmotionClassifier:
         """
         # Load the model on GPU if available, else CPU
         device = 0 if torch.cuda.is_available() else -1
+        # Use top_k=None instead of deprecated return_all_scores=True
         self.classifier = pipeline(
             "text-classification",
-            model=model_name,
-            return_all_scores=True,
-            device=device
+            model="SamLowe/roberta-base-go_emotions",
+            top_k=None,
+            device=-1  # Use CPU for broad compatibility
         )
 
     def detect_emotion(self, text: str) -> tuple[str, float, list]:
